@@ -1,0 +1,257 @@
+---
+title: "Project1"
+author: "Yahui Li"
+date: "2020/1/13"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Step1 Read Data
+
+```{r read data,  message = FALSE}
+#install.packages("AER")
+library(AER)
+data("STAR")
+```
+
+### Step2 Explore Data
+We will only examine the math scores in 1st grade in this project.
+```{r}
+data <- data.frame(star1 = STAR$star1, math1 = STAR$math1)
+
+sapply(data,class)
+sapply(data,summary)
+```
+
+```{r}
+data.star1.na <- data[is.na(data$star1),]
+all(is.na(data.star1.na$math1))
+```
+
+Which shows that the math score has not been recorded if class type is not recorded.
+So we can remove the data where star1 is NA.
+
+One of the way to deal with NA in math1 is to remove them
+```{r}
+data_remove_na <- na.omit(data[-is.na(data$star1),])
+```
+```{r}
+table(data_remove_na$star1)
+pie(table(data_remove_na$star1),main = "pie chart of STAR class type")
+tapply(data_remove_na$math1, data_remove_na$star1,summary)
+boxplot(data$math1~data$star1,main = "box plot of math score in different class", 
+        xlab = "STAR class type", ylab = "math score", col = c("white", "skyblue", "pink"))
+```
+
+From the result,
+
+for mean, small > regular+aide > regular;
+
+for all quantile information, small > regular+aide > regular;
+
+for min, small > other two; For max, they are the same.
+
+Something interesting: there are only some certain scores like 601 612 627 653 676.
+
+
+### Step3 One Way ANOVA Model
+
+$$Y_{ij} = \mu_{1} + \tau_{2}X_{2,ij} +\tau_{3}X_{3,ij}+\epsilon_{ij},\quad
+\epsilon_{ij}\sim\mathrm{N}(0,\sigma^{2}),\quad
+i=1,2,3,j=1,\cdots,n_{i}.$$
+
+where $i=1$ means the class type in 1st grade is regular; $i=2$ means the class type in 1st grade is small; $i=3$ means the class type in 1st grade is regular-with-aide.
+
+From the table in step2, $n_{1} = 2507, n_{2} = 1868, n_{3} = 2225, n = 6600$.
+
+$X_{2,ij} = 1$ if $i=2$, otherwise $X_{2,ij} = 0$.
+$X_{3,ij} = 1$ if $i=3$, otherwise $X_{3,ij} = 0$.
+
+$Y_{ij}$ denotes the math grade in 1st grade of the j-th experimental unit
+in the i-th class type.
+
+$\mu_{i}$ means the population mean of the i-th type class in 1st grade, $i = 1, 2, 3$.
+
+$\tau_{i} = \mu_{i} - \mu_{1}$ means the difference in population mean between i-th type and first type in 1st grade, $i = 2, 3$.
+
+$\epsilon_{ij}$ is independent and identically distributed normal random variable with $0$ mean and $\sigma^{2}$ variance under normal assumption. 
+
+
+Model Assumption  
+(a) Response variable residuals are normally distributed.  
+(b) Variances of populations are equal.  
+(c) Responses for a given group are independent and identically distributed normal random variables.  
+All of the assumptions are necessary, because for each population violate the normal distribution, F-tests are not robust. Moreover, if the assumption of homoscedasticity is violated, the Type I error properties degenerate much more severely.[5] ( Randolf, E. A.; Barcikowski, R. S. (1989). "Type I error rate when real study values are used as population parameters in a Monte Carlo study". Paper presented at the 11th annual meeting of the Mid-Western Educational Research Association, Chicago.)  
+
+
+
+### Step4 Appropriate
+
+Before we fit the model, we need to ensure that model is appropriate on this dataset, that is, the response variable satisfies the assumptions of our model. In other words, we will check the normality and equal variance of the response varibales.
+
+We first make a density plot and a Q-Q plot to check the normality of `math1`.
+
+```{r}
+library(ggplot2)
+x <- seq(404, 676, length.out=100)
+df <- with(data_remove_na, data.frame(x = x, y = dnorm(x, mean(math1), sd(math1))))
+
+ggplot(data_remove_na, aes(x=math1, y = ..density..)) + 
+  geom_histogram(binwidth = 20, fill = "grey", color = "black") +
+  geom_line(data = df, aes(x = x, y = y), color = "red") +
+  labs(x="math score",y="",title = "histogram of math socre in 1st grade")
+
+qqnorm(data_remove_na$math1, pch = 1, frame = FALSE)
+qqline(data_remove_na$math1, col = "steelblue", lwd = 2)
+```
+
+The histogram shows that it seems normal distribution. 
+
+The Q-Q plot shows the the distribution of math score is right-skewed.
+
+So we use Box-Cox method to make a transformation on `math1`. 
+
+```{r}
+library(MASS)
+boxcox(math1 ~ star1 , data = data_remove_na)
+```
+
+It indicates that we need make a log-transformation for `math1`.
+
+```{r}
+summary(log(data_remove_na$math1))
+x <- seq(6.001, 6.516, length.out=50)
+df <- with(data_remove_na, data.frame(x = x, y = dnorm(x, mean(log(math1)), sd(log(math1)))))
+
+ggplot(data_remove_na, aes(x=log(math1), y = ..density..)) + 
+  geom_histogram(binwidth = 0.02, fill = "grey", color = "black") +
+  geom_line(data = df, aes(x = x, y = y), color = "red") +
+  labs(x="log math score",y="",title = "histogram of log math socre in 1st grade")
+
+qqnorm(log(data_remove_na$math1), pch = 1, frame = FALSE)
+qqline(log(data_remove_na$math1), col = "steelblue", lwd = 2)
+```
+
+The graph shows the distribution of log math score in 1st grade is Normal-like.
+
+Then we calculate the variance of math grade in 1st grade of each class type.
+```{r,  message = FALSE}
+library(tidyverse)
+```
+```{r}
+data_remove_na %>%
+  group_by(star1) %>%
+  summarize(var_math1 = var(log(math1), na.rm = T))
+```
+
+The result shows that they are very small and nearly equal to each other. Therefore, it is appropiate to build our model on this dataset.
+
+
+### Step5 Fit Model
+
+```{r}
+anova.fit<- aov(log(math1)~star1,data=data_remove_na)
+summary(anova.fit)
+anova.fit$coefficients
+```
+
+From the result, the fitted model we get is:
+$$\log\hat{Y}_{ij} = 6.2608 + 0.0250 X_{2,ij} + 0.0081X_{3,ij}$$
+
+with means when the type is regular, the estimate math score is $e^{6.2608} = 523.6377$;
+when the type is small, the estimate math score is $e^{6.2608+0.0250} = 536.8936$;
+when the type is regular-with-aide, the estimate math score is $e^{6.2608+0.0081} = 527.8964$.
+
+The following is a ANOVA table for this model.  
+
+|     Source of Variation   |  Sum of Squares   |  Degrees of Freedom | MS |
+| --------------|:-----------:|:----------------:|:------------------------------------------:|
+| `Between treatments`     | SSTR = 0.68 | 2  |  MSTR = 0.3391  | |
+| `Within treatments`      | SSE = 42.55 | 6597 |   MSE = 0.0065  | |
+|    `Total`      |   SSTO = 43.23  |  6599   |       |     |
+
+### Step6 model diagnostic and sensitivity analysis
+
+Recalling the above assumptions, there are three things we need to check: normality, equal variance and independence.
+
+By Q-Q plot, we can check normality. And By residuals vs fitted value plot, we can check equal variance.
+```{r}
+par(mfrow=c(1,2))
+plot(anova.fit, which = c(1,2))
+```
+The first figure indicates equal variacne, and the second nearly linear figure supports normality. 
+
+**shijianversion**
+
+```{r}
+par(mfrow=c(2,2))
+residuals <- anova.fit$residuals
+##Plot the residuals (or the other two versions) against fitted values 
+plot(anova.fit$fitted.values, anova.fit$residuals,
+     type = "p",pch=16,cex=1.5,xlab="Fitted values",ylab="Residuals")
+#QQplot
+qqnorm(residuals);qqline(residuals)
+#residuals
+hist(residuals)
+#studentized residuals
+residuals_std <- rstudent(anova.fit)
+hist(residuals_std)
+```
+
+From the scatterplot of residuals vs fitted valuues, the residuals are divided into three groups and among each group, these residuals are around the zero, whcih menas that the average residuals equals to zero.
+According to the histogram of residuals and studentized residuals, we can find that the distribution of the residuals of the fitted model approximates to the normal distribution. Besides, the same conclusion can be obtained by checking the Q-Q Plot of the residuals. Therefore, we can confirm that the residuals of the model are normally distributed.
+
+We now turn to formal tests of the equality of variances.
+First, we calculate the varianves for each type of class and find that the variances of three types of class are close to each other.
+```{r}
+# Calculate the variances for each group:
+(vars = tapply(data_remove_na$math1,data_remove_na$star1,var))
+
+```
+Then, because the sample sizes of the three types of class are not same, we choose two formal tests, which are Bartlett test and Levene test, to check the equality of model variances.
+```{r}
+data_remove_na$residuals <- residuals
+#bartlett test
+bartlett.test(residuals ~ star1, data = data_remove_na)
+#levene test
+leveneTest(residuals ~ star1, data = data_remove_na)
+```
+From the two tests, both of the P-values are much larger than 0.05, which means that we can not reject the null hyperthesis: the variances of the model are equal.
+
+In conclusion, we confirm that our model satisifies the normality assumption.
+
+#### Sensitivity Analysis
+In order to test the sensitivity of our model, we decide to relax the assumption of our model. To be specific, we want to figure out that whether the influence of class size still exists even if the data is not normally distributed. Thus, we conduct the nonparameteric tests as follows, which are The rank test and Krusal-Wallis test.
+```{r}
+#rank test
+data_remove_na$rank <- rank(data_remove_na$math1)
+summary(aov(rank ~ star1, data = data_remove_na))
+
+#kruskal test
+kruskal.test(math1 ~ star1, data = data_remove_na)
+
+```
+The results both show that the math scores of the different types of class are different at 99% confident level. So, even if the data was not normally distributed, there would still be influence of class size. In a word, our one-way anova model is reasonable in this case.
+
+
+#step6 hypothese test
+
+```{r}
+TukeyHSD(anova.fit)
+pairwise.t.test(log(data_remove_na$math1),data_remove_na$star1,p.adj = "bonf")
+library(agricolae)
+scheffe.test(anova.fit,"star1", group=TRUE,console=TRUE)
+```
+For task 7, we choose three methods to test the difference in the math scaled score in 1st grade across students in different class types. We use Tukey's Procedure, Bonfeeoni's Procedure and Scheffe's procedure. For Tukey's Procedure, all the p values are less than 0.05, there is statistically significant among three factors. For Bonfeeoni's Procedure, we get the same result as Tukey's Procedure. However, for Scheffe's procedure, we get the different result. It shows that Means with the same letter are not significantly different.
+
+
+
+
+
+
+
